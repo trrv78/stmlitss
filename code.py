@@ -34,5 +34,14 @@ while True:
     
     time.sleep(5)  # Wait for 5 seconds before fetching new data
     
+    # Calculate maximum, minimum, and average values
+    max_value = df_recent["mq2"].max()
+    min_value = df_recent["mq2"].min()
+    avg_value = df_recent["mq2"].mean()
+    
+    st.write("Maximum Value:", max_value)
+    st.write("Minimum Value:", min_value)
+    st.write("Average Value:", avg_value)
+    
     st.rerun()  # Rerun the script to update the page
 
