@@ -1,47 +1,84 @@
-import pandas as pd 
-import streamlit as st 
+import streamlit as st
+import pandas as pd
+from influxdb_client import InfluxDBClient, Point, WritePrecision
 import plotly.express as px
-import time
+import warnings
+warnings.filterwarnings('ignore')
 
-from supabase import create_client
+# Initialize InfluxDB client using URL, token, org, and bucket
+url = "http://localhost:8086"
+token = "your_token"
+org = "your_org"
+bucket = "my_bucket"
+measurement = "csv_data"
+client = InfluxDBClient(url=url, token=token, org=org)
+write_api = client.write_api()
 
-API_URL = 'https://xcveldffznwantuastlu.supabase.co'
-API_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhjdmVsZGZmem53YW50dWFzdGx1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDI2MzQ1MDYsImV4cCI6MjAxODIxMDUwNn0.jfjqBFAMrdumZ8_S5BPmzAadKcvN9BZjm02xUcyIkPQ'
-supabase = create_client(API_URL, API_KEY)
+st.set_page_config(page_title="File to InfluxDB Uploader", page_icon=":bar_chart", layout="wide")
+st.title(":new_moon_with_face: File to InfluxDB Uploader")
+st.markdown('<style>div.block-container{padding-top:2rem;}</style>', unsafe_allow_html=True)
 
-@st.cache_data(ttl=60)  # Cache the data for 60 seconds
-def fetch_data():
-    supabaseList = supabase.table('maintable').select('*').execute().data
-    df = pd.DataFrame(supabaseList)
-    df["DateTime"] = pd.to_datetime(df["created_at"])  # Convert "DateTime" column to datetime data type
-    return df
+@st.cache_data
+def read_file(file):
+    try:
+        if file.name.endswith(".csv"):
+            return pd.read_csv(file, dayfirst=True)  # Ensure dd/mm/yyyy format
+        elif file.name.endswith(".xlsx"):
+            # Read all sheets into a single DataFrame
+            all_sheets = pd.read_excel(file, sheet_name=None, engine="openpyxl")
+            return pd.concat(all_sheets.values(), ignore_index=True)
+        else:
+            st.error("Unsupported file format. Please upload CSV or XLSX.")
+            return None
+    except Exception as e:
+        st.error(f"Error reading file: {e}")
+        return None
 
-st.set_page_config(page_title="Dashboard", layout='centered', initial_sidebar_state='collapsed')
+# File uploader
+uploaded_file = st.file_uploader(":file_folder: Please upload your file", type=["csv", "xlsx"])
 
-st.markdown('### Smoke Sensor')
+if uploaded_file is not None:
+    df = read_file(uploaded_file)
+    if df is not None:
+        st.write("Preview of Uploaded Data:")
+        st.write(df.head())
 
-while True:
-    df = fetch_data()
-    
-    # Get the most recent 5 entries
-    df_recent = df.tail(5)
-    
-    st.plotly_chart(px.line(df_recent, x="DateTime", y="mq2", title='Smoke Sensor Readings', markers=True), use_container_width=True)
+        # Filter Options
+        filtered_df = df.copy()
+        selected_columns = st.sidebar.multiselect("Filter by Columns", df.columns)
+        if selected_columns:
+            filtered_df = df[selected_columns]
 
-    st.plotly_chart(px.scatter(df_recent, x="DateTime", y="mq2", title='Smoke Sensor Readings'), use_container_width=True)
+        # Date Filtering
+        if 'Date' in df.columns:
+            df['Date'] = pd.to_datetime(df['Date'], format="%d/%m/%Y", errors='coerce')
+            valid_dates = df['Date'].dropna()
+            if not valid_dates.empty:
+                date_range = st.sidebar.date_input(
+                    "Filter by Date Range", [valid_dates.min().date(), valid_dates.max().date()]
+                )
+                filtered_df = df[(df['Date'] >= pd.to_datetime(date_range[0])) & (df['Date'] <= pd.to_datetime(date_range[1]))]
 
-    st.plotly_chart(px.bar(df_recent, x="DateTime", y="mq2", title='Smoke Sensor Readings'), use_container_width=True)
-    
-    time.sleep(5)  # Wait for 5 seconds before fetching new data
-    
-    # Calculate maximum, minimum, and average values
-    max_value = df_recent["mq2"].max()
-    min_value = df_recent["mq2"].min()
-    avg_value = df_recent["mq2"].mean()
-    
-    st.write("Maximum Value:", max_value)
-    st.write("Minimum Value:", min_value)
-    st.write("Average Value:", avg_value)
-    
-    st.rerun()  # Rerun the script to update the page
+        st.write("Filtered Data:")
+        st.write(filtered_df)
 
+        # Convert DataFrame to InfluxDB JSON format and upload
+        def upload_to_influxdb(df):
+            for _, row in df.iterrows():
+                point = Point(measurement).tag("source", "streamlit_upload")
+                for col, value in row.items():
+                    if isinstance(value, pd.Timestamp):
+                        value = value.strftime("%d/%m/%Y")
+                    point.field(col, value)
+                write_api.write(bucket=bucket, org=org, record=point)
+
+        # Upload to InfluxDB
+        if st.button("Upload to InfluxDB"):
+            try:
+                upload_to_influxdb(filtered_df)
+                st.success("Data uploaded successfully to InfluxDB!")
+            except Exception as e:
+                st.error(f"Error uploading data: {e}")
+
+# Close the connection on app stop
+client.close()
