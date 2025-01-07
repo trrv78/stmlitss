@@ -6,11 +6,11 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Initialize InfluxDB client using URL, token, org, and bucket
-url = "http://localhost:8086"
-token = "your_token"
-org = "your_org"
-bucket = "my_bucket"
-measurement = "csv_data"
+url = "https://us-east-1-1.aws.cloud2.influxdata.com"
+token = "ELdquVkstVtEKJ9QygEo9n5RGbOuGxPJ9VZnP_pyLVDWtXcmf7cC5IKtQFsJCWmBwVTzfgt5CmXyluB4B39tGA=="
+org = "84724340f460ff21"
+bucket = "april"
+measurement = "csv_data99"
 client = InfluxDBClient(url=url, token=token, org=org)
 write_api = client.write_api()
 
