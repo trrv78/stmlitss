@@ -43,13 +43,14 @@ if uploaded_file is not None:
         st.write("Preview of Uploaded Data:")
         st.write(df.head())
 
-        # Filter Options
-        filtered_df = df.copy()
-        selected_columns = st.sidebar.multiselect("Filter by Columns", df.columns)
-        if selected_columns:
-            filtered_df = df[selected_columns]
+        # Filter Options for each column
+        for column in df.columns:
+            unique_values = df[column].dropna().unique()
+            selected_values = st.sidebar.multiselect(f"Filter by {column}", unique_values)
+            if selected_values:
+                df = df[df[column].isin(selected_values)]
 
-        # Date Filtering
+        # Date Filtering with full-day inclusion
         if 'Date' in df.columns:
             df['Date'] = pd.to_datetime(df['Date'], format="%d/%m/%Y", errors='coerce')
             valid_dates = df['Date'].dropna()
@@ -57,10 +58,18 @@ if uploaded_file is not None:
                 date_range = st.sidebar.date_input(
                     "Filter by Date Range", [valid_dates.min().date(), valid_dates.max().date()]
                 )
-                filtered_df = df[(df['Date'] >= pd.to_datetime(date_range[0])) & (df['Date'] <= pd.to_datetime(date_range[1]))]
+                # Adjusting end date to include the entire selected day
+                start_date = pd.to_datetime(date_range[0])
+                end_date = pd.to_datetime(date_range[1]) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+                df = df[(df['Date'] >= start_date) & (df['Date'] <= end_date)]
 
         st.write("Filtered Data:")
-        st.write(filtered_df)
+        st.write(df)
+
+        # Calculate total value in 'Amount' column if it exists
+        if 'Amount' in df.columns:
+            total_amount = df['Amount'].sum()
+            st.write(f"Total Amount: {total_amount}")
 
         # Convert DataFrame to InfluxDB JSON format and upload
         def upload_to_influxdb(df):
@@ -75,7 +84,7 @@ if uploaded_file is not None:
         # Upload to InfluxDB
         if st.button("Upload to InfluxDB"):
             try:
-                upload_to_influxdb(filtered_df)
+                upload_to_influxdb(df)
                 st.success("Data uploaded successfully to InfluxDB!")
             except Exception as e:
                 st.error(f"Error uploading data: {e}")
