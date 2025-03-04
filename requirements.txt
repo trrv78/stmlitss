@@ -2,3 +2,7 @@ influxdb-client
 plotly
 openpyxl
 scikit-learn
+plotly.express
+numpy
+supabase
+pdfkit
