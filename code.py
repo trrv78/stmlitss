@@ -83,7 +83,7 @@ if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = time.time()
 
 def main():
-    st.title("Bridge Monitoring Dashboard with Predictive Maintenance")
+    st.title("Bridge Monitoring Dashboard ")
 
     # Sidebar with lock/unlock functionality
     st.sidebar.header("Controls")
