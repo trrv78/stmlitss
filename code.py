@@ -49,13 +49,13 @@ def calculate_failure_prob(value, threshold, historical_mean, historical_std, re
     if historical_std == 0:
         return 0
     if reverse:  # For water level (distance), lower values are critical
-        z_score = (value - threshold) / historical_std  # Distance to critical threshold
+        z_score = (value - threshold) / historical_std
         prob = stats.norm.cdf(z_score)
-        return (1 - prob) * 100  # Probability of falling below threshold
+        return (1 - prob) * 100
     else:  # For weight and vibration, higher values are critical
         z_score = (threshold - value) / historical_std
         prob = stats.norm.cdf(z_score)
-        return (1 - prob) * 100  # Probability of exceeding threshold
+        return (1 - prob) * 100
 
 # Status check
 def get_status(value, thresholds, reverse=False):
@@ -79,6 +79,8 @@ if 'df' not in st.session_state:
 if 'historical_df' not in st.session_state:
     st.session_state.historical_df = pd.DataFrame(columns=['created_at', 'distance', 'weight', 'temperature', 'accel', 'gyro'])
     st.session_state.historical_df['created_at'] = pd.to_datetime(st.session_state.historical_df['created_at'])
+if 'last_refresh' not in st.session_state:
+    st.session_state.last_refresh = time.time()
 
 def main():
     st.title("Bridge Monitoring Dashboard with Predictive Maintenance")
@@ -89,50 +91,19 @@ def main():
     
     # Lock/unlock toggle
     if 'locked' not in st.session_state:
-        st.session_state.locked = True  # Start with values locked
+        st.session_state.locked = True
     
     st.session_state.locked = st.sidebar.toggle("Unlock Thresholds", value=st.session_state.locked)
     
     st.sidebar.header("Thresholds")
     st.sidebar.markdown("**Water Level**: Lower values mean water is closer to the bridge.")
     
-    # Locked/default values from the image
-    water_critical = st.sidebar.number_input(
-        "Water Level Critical (cm)", 
-        value=5.0, 
-        step=0.1, 
-        disabled=st.session_state.locked
-    )
-    water_warning = st.sidebar.number_input(
-        "Water Level Warning (cm)", 
-        value=10.0, 
-        step=0.1, 
-        disabled=st.session_state.locked
-    )
-    weight_critical = st.sidebar.number_input(
-        "Weight Critical (g)", 
-        value=80.0, 
-        step=1.0, 
-        disabled=st.session_state.locked
-    )
-    weight_warning = st.sidebar.number_input(
-        "Weight Warning (g)", 
-        value=60.0, 
-        step=1.0, 
-        disabled=st.session_state.locked
-    )
-    vib_critical = st.sidebar.number_input(
-        "Vibration Critical (m/s²)", 
-        value=3.9, 
-        step=0.1, 
-        disabled=st.session_state.locked
-    )
-    vib_warning = st.sidebar.number_input(
-        "Vibration Warning (m/s²)", 
-        value=3.88, 
-        step=0.1, 
-        disabled=st.session_state.locked
-    )
+    water_critical = st.sidebar.number_input("Water Level Critical (cm)", value=5.0, step=0.1, disabled=st.session_state.locked)
+    water_warning = st.sidebar.number_input("Water Level Warning (cm)", value=10.0, step=0.1, disabled=st.session_state.locked)
+    weight_critical = st.sidebar.number_input("Weight Critical (g)", value=80.0, step=1.0, disabled=st.session_state.locked)
+    weight_warning = st.sidebar.number_input("Weight Warning (g)", value=60.0, step=1.0, disabled=st.session_state.locked)
+    vib_critical = st.sidebar.number_input("Vibration Critical (m/s²)", value=3.9, step=0.1, disabled=st.session_state.locked)
+    vib_warning = st.sidebar.number_input("Vibration Warning (m/s²)", value=3.88, step=0.1, disabled=st.session_state.locked)
 
     THRESHOLDS = {
         'distance': {'critical': water_critical, 'warning': water_warning},
@@ -148,201 +119,172 @@ def main():
     predictions_placeholder = st.empty()
     maintenance_placeholder = st.empty()
 
-    figs = {key: go.Figure() for key in ['water', 'weight', 'temp', 'vib', 'gyro']}
-    
     # Data retry logic
-    max_retries = 5
-    retry_count = 0
-    warning_displayed = False
+    data = fetch_data()
+    if not data:
+        with status_placeholder.container():
+            st.error("No data available from Supabase. Please check the connection or data source.")
+        return
 
-    while True:
-        data = fetch_data()
-        
-        if not data:
-            retry_count += 1
-            if not warning_displayed:
-                with status_placeholder.container():
-                    st.warning(f"No data available. Retrying {max_retries - retry_count} more times...")
-                warning_displayed = True
-                
-            if retry_count >= max_retries:
-                with status_placeholder.container():
-                    st.error("Maximum retries reached. No data available from Supabase. Please check the connection or data source.")
-                    if st.button("Retry Now"):
-                        retry_count = 0
-                        warning_displayed = False
-                        continue
-                    if st.button("Exit"):
-                        st.write("Dashboard stopped.")
-                        break
-            time.sleep(refresh_rate)
-            continue
+    # Process data
+    new_df = pd.DataFrame(data)
+    if 'created_at' in new_df.columns:
+        new_df['created_at'] = pd.to_datetime(new_df['created_at'])
+    else:
+        new_df['created_at'] = pd.Timestamp.now()
+    
+    st.session_state.df = pd.concat([st.session_state.df, new_df]).drop_duplicates(subset=['created_at']).sort_values('created_at').tail(5)
+    recent_df = st.session_state.df
 
-        # Reset retry counter and clear warning when data is received
-        retry_count = 0
-        if warning_displayed:
-            status_placeholder.empty()
-            warning_displayed = False
+    st.session_state.historical_df = pd.DataFrame(data)
+    st.session_state.historical_df['created_at'] = pd.to_datetime(st.session_state.historical_df['created_at'])
+    historical_df = st.session_state.historical_df.tail(50)
 
-        # Process data
-        new_df = pd.DataFrame(data)
-        if 'created_at' in new_df.columns:
-            new_df['created_at'] = pd.to_datetime(new_df['created_at'])
-        else:
-            new_df['created_at'] = pd.Timestamp.now()
-        
-        st.session_state.df = pd.concat([st.session_state.df, new_df]).drop_duplicates(subset=['created_at']).sort_values('created_at').tail(5)
-        recent_df = st.session_state.df
+    # Metrics and Status
+    with metrics_placeholder.container():
+        st.header("Latest Measurements")
+        latest = recent_df.iloc[-1]
+        col1, col2, col3 = st.columns(3)
+        col4, col5 = st.columns(2)
+        water_status, water_color = get_status(latest['distance'], THRESHOLDS['distance'], reverse=True)
+        weight_status, weight_color = get_status(latest['weight'], THRESHOLDS['weight'])
+        vib_status, vib_color = get_status(latest['accel'], THRESHOLDS['accel'])
+        with col1:
+            st.metric("Water Level", f"{latest['distance']:.2f} cm", water_status, delta_color="off")
+            st.markdown(f"<p style='color:{water_color}'>{water_status}</p>", unsafe_allow_html=True)
+        with col2:
+            st.metric("Weight", f"{latest['weight']:.2f} g", weight_status, delta_color="off")
+            st.markdown(f"<p style='color:{weight_color}'>{weight_status}</p>", unsafe_allow_html=True)
+        with col3:
+            st.metric("Temperature", f"{latest['temperature']:.2f} °C")
+        with col4:
+            st.metric("Vibration", f"{latest['accel']:.2f} m/s²", vib_status, delta_color="off")
+            st.markdown(f"<p style='color:{vib_color}'>{vib_status}</p>", unsafe_allow_html=True)
+        with col5:
+            st.metric("Gyro", f"{latest['gyro']:.2f} rad/s")
 
-        st.session_state.historical_df = pd.DataFrame(data)
-        st.session_state.historical_df['created_at'] = pd.to_datetime(st.session_state.historical_df['created_at'])
-        historical_df = st.session_state.historical_df.tail(50)
-
-        # Metrics and Status
-        with metrics_placeholder.container():
-            st.header("Latest Measurements")
-            latest = recent_df.iloc[-1]
-            col1, col2, col3 = st.columns(3)
-            col4, col5 = st.columns(2)
-            water_status, water_color = get_status(latest['distance'], THRESHOLDS['distance'], reverse=True)
-            weight_status, weight_color = get_status(latest['weight'], THRESHOLDS['weight'])
-            vib_status, vib_color = get_status(latest['accel'], THRESHOLDS['accel'])
-            with col1:
-                st.metric("Water Level", f"{latest['distance']:.2f} cm", water_status, delta_color="off")
-                st.markdown(f"<p style='color:{water_color}'>{water_status}</p>", unsafe_allow_html=True)
-            with col2:
-                st.metric("Weight", f"{latest['weight']:.2f} g", weight_status, delta_color="off")
-                st.markdown(f"<p style='color:{weight_color}'>{weight_status}</p>", unsafe_allow_html=True)
-            with col3:
-                st.metric("Temperature", f"{latest['temperature']:.2f} °C")
-            with col4:
-                st.metric("Vibration", f"{latest['accel']:.2f} m/s²", vib_status, delta_color="off")
-                st.markdown(f"<p style='color:{vib_color}'>{vib_status}</p>", unsafe_allow_html=True)
-            with col5:
-                st.metric("Gyro", f"{latest['gyro']:.2f} rad/s")
-
-        # Charts
-        with charts_placeholder.container():
-            st.header("Time Series Data (Last 5 Measurements)")
-            for fig, key, title, y_label, trace_type in [
-                (figs['water'], 'distance', 'Water Levels', 'Distance to Bridge (cm)', go.Bar),
-                (figs['weight'], 'weight', 'Weight', 'Weight (g)', go.Bar),
-                (figs['temp'], 'temperature', 'Temperature', 'Temperature (°C)', go.Scatter),
-                (figs['vib'], 'accel', 'Vibrations', 'Vibration (m/s²)', go.Scatter),
-                (figs['gyro'], 'gyro', 'Gyro', 'Angular Velocity (rad/s)', go.Scatter)
-            ]:
-                fig.data = []
-                trend_arrow, trend_text = get_trend(recent_df, key)
-                mean_val = historical_df[key].mean()
-                std_val = historical_df[key].std()
-                if trace_type == go.Bar:
-                    fig.add_trace(go.Bar(x=recent_df['created_at'], y=recent_df[key], name=title.split()[0]))
-                else:
-                    fig.add_trace(go.Scatter(x=recent_df['created_at'], y=recent_df[key], mode='lines+markers', name=title.split()[0]))
-                fig.update_layout(
-                    title=f"{title} ({trend_arrow} {trend_text}, Avg: {mean_val:.2f})",
-                    xaxis_title='Time',
-                    yaxis_title=y_label,
-                    template='plotly_dark'
-                )
-                if key == 'weight':
-                    fig.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="Threshold (80g)")
-                if std_val > 0 and abs(latest[key] - mean_val) > 2 * std_val:
-                    fig.add_annotation(x=latest['created_at'], y=latest[key], text="Anomaly!", showarrow=True, arrowhead=1, ax=20, ay=-30)
-                st.plotly_chart(fig, use_container_width=True)
-
-        # Recent Data
-        with recent_placeholder.container():
-            st.header("Most Recent 5 Measurements")
-            st.dataframe(recent_df[['created_at', 'distance', 'weight', 'temperature', 'accel', 'gyro']],
-                         column_config={
-                             "created_at": "Time", "distance": "Water Level (cm)", "weight": "Weight (g)",
-                             "temperature": "Temp (°C)", "accel": "Vib (m/s²)", "gyro": "Gyro (rad/s)"
-                         })
-
-        # Predictions
-        with predictions_placeholder.container():
-            st.header("Predictions for Next Measurement")
-            col1, col2, col3 = st.columns(3)
-            next_water, water_ci = predict_next(recent_df, 'distance')
-            next_weight, weight_ci = predict_next(recent_df, 'weight')
-            next_vib, vib_ci = predict_next(recent_df, 'accel')
-            with col1:
-                st.write("Water Level:")
-                if next_water:
-                    st.write(f"{next_water:.2f} ± {water_ci:.2f} cm")
-                else:
-                    st.write("Insufficient data")
-            with col2:
-                st.write("Weight:")
-                if next_weight:
-                    st.write(f"{next_weight:.2f} ± {weight_ci:.2f} g")
-                else:
-                    st.write("Insufficient data")
-            with col3:
-                st.write("Vibration:")
-                if next_vib:
-                    st.write(f"{next_vib:.2f} ± {vib_ci:.2f} m/s²")
-                else:
-                    st.write("Insufficient data")
-
-        # Predictive Maintenance Recommendations (updated to include Water Level)
-        with maintenance_placeholder.container():
-            st.header("Predictive Maintenance Analysis")
-            latest = recent_df.iloc[-1]
-            water_mean = historical_df['distance'].mean()
-            water_std = historical_df['distance'].std()
-            weight_mean = historical_df['weight'].mean()
-            weight_std = historical_df['weight'].std()
-            vib_mean = historical_df['accel'].mean()
-            vib_std = historical_df['accel'].std()
-
-            water_prob = calculate_failure_prob(latest['distance'], water_critical, water_mean, water_std, reverse=True)
-            weight_prob = calculate_failure_prob(latest['weight'], weight_critical, weight_mean, weight_std)
-            vib_prob = calculate_failure_prob(latest['accel'], vib_critical, vib_mean, vib_std)
-
-            recs = []
-            # Water Level analysis (reverse logic: lower values are critical)
-            if water_status == "Critical":
-                recs.append(f"CRITICAL: Water level failure probability {water_prob:.1f}%. Immediate inspection required due to flood risk.")
-            elif next_water and next_water - water_ci < water_critical:
-                days_to_failure = (latest['distance'] - water_critical) / (latest['distance'] - next_water)
-                recs.append(f"WARNING: Water level may reach critical (flood risk) in ~{days_to_failure:.1f} measurements ({water_prob:.1f}% probability)")
-
-            # Weight analysis
-            if weight_status == "Critical":
-                recs.append(f"CRITICAL: Weight failure probability {weight_prob:.1f}%. Immediate structural inspection needed.")
-            elif next_weight and next_weight + weight_ci > weight_critical:
-                days_to_failure = (weight_critical - latest['weight']) / (next_weight - latest['weight'])
-                recs.append(f"WARNING: Weight may exceed critical in ~{days_to_failure:.1f} measurements ({weight_prob:.1f}% probability)")
-
-            # Vibration analysis
-            if vib_status == "Critical":
-                recs.append(f"CRITICAL: Vibration failure probability {vib_prob:.1f}%. Immediate inspection required.")
-            elif next_vib and next_vib + vib_ci > vib_critical:
-                days_to_failure = (vib_critical - latest['accel']) / (next_vib - latest['accel'])
-                recs.append(f"WARNING: Vibration may exceed critical in ~{days_to_failure:.1f} measurements ({vib_prob:.1f}% probability)")
-
-            # Anomaly detection for all parameters
-            if water_std > 0 and abs(latest['distance'] - water_mean) > 3 * water_std:
-                recs.append("ANOMALY: Unusual water level detected. Verify sensor readings or check for flooding.")
-            if weight_std > 0 and abs(latest['weight'] - weight_mean) > 3 * weight_std:
-                recs.append("ANOMALY: Unusual weight detected. Inspect load distribution.")
-            if vib_std > 0 and abs(latest['accel'] - vib_mean) > 3 * vib_std:
-                recs.append("ANOMALY: Unusual vibration detected. Check structural integrity.")
-
-            if not recs:
-                st.success("All systems operating normally. Schedule routine maintenance in 30 days.")
+    # Charts
+    with charts_placeholder.container():
+        st.header("Time Series Data (Last 5 Measurements)")
+        for idx, (key, title, y_label, trace_type) in enumerate([
+            ('distance', 'Water Levels', 'Distance to Bridge (cm)', go.Bar),
+            ('weight', 'Weight', 'Weight (g)', go.Bar),
+            ('temperature', 'Temperature', 'Temperature (°C)', go.Scatter),
+            ('accel', 'Vibrations', 'Vibration (m/s²)', go.Scatter),
+            ('gyro', 'Gyro', 'Angular Velocity (rad/s)', go.Scatter)
+        ]):
+            fig = go.Figure()  # Create a new figure for each chart
+            trend_arrow, trend_text = get_trend(recent_df, key)
+            mean_val = historical_df[key].mean()
+            std_val = historical_df[key].std()
+            if trace_type == go.Bar:
+                fig.add_trace(go.Bar(x=recent_df['created_at'], y=recent_df[key], name=title.split()[0]))
             else:
-                for rec in recs:
-                    if "CRITICAL" in rec:
-                        st.error(rec)
-                    elif "WARNING" in rec:
-                        st.warning(rec)
-                    else:
-                        st.info(rec)
+                fig.add_trace(go.Scatter(x=recent_df['created_at'], y=recent_df[key], mode='lines+markers', name=title.split()[0]))
+            fig.update_layout(
+                title=f"{title} ({trend_arrow} {trend_text}, Avg: {mean_val:.2f})",
+                xaxis_title='Time',
+                yaxis_title=y_label,
+                template='plotly_dark'
+            )
+            if key == 'weight':
+                fig.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="Threshold (80g)")
+            if std_val > 0 and abs(latest[key] - mean_val) > 2 * std_val:
+                fig.add_annotation(x=latest['created_at'], y=latest[key], text="Anomaly!", showarrow=True, arrowhead=1, ax=20, ay=-30)
+            st.plotly_chart(fig, use_container_width=True, key=f"chart_{key}_{idx}")
 
-        time.sleep(refresh_rate)
+    # Recent Data
+    with recent_placeholder.container():
+        st.header("Most Recent 5 Measurements")
+        st.dataframe(recent_df[['created_at', 'distance', 'weight', 'temperature', 'accel', 'gyro']],
+                     column_config={
+                         "created_at": "Time", "distance": "Water Level (cm)", "weight": "Weight (g)",
+                         "temperature": "Temp (°C)", "accel": "Vib (m/s²)", "gyro": "Gyro (rad/s)"
+                     })
+
+    # Predictions
+    with predictions_placeholder.container():
+        st.header("Predictions for Next Measurement")
+        col1, col2, col3 = st.columns(3)
+        next_water, water_ci = predict_next(recent_df, 'distance')
+        next_weight, weight_ci = predict_next(recent_df, 'weight')
+        next_vib, vib_ci = predict_next(recent_df, 'accel')
+        with col1:
+            st.write("Water Level:")
+            if next_water:
+                st.write(f"{next_water:.2f} ± {water_ci:.2f} cm")
+            else:
+                st.write("Insufficient data")
+        with col2:
+            st.write("Weight:")
+            if next_weight:
+                st.write(f"{next_weight:.2f} ± {weight_ci:.2f} g")
+            else:
+                st.write("Insufficient data")
+        with col3:
+            st.write("Vibration:")
+            if next_vib:
+                st.write(f"{next_vib:.2f} ± {vib_ci:.2f} m/s²")
+            else:
+                st.write("Insufficient data")
+
+    # Predictive Maintenance Recommendations
+    with maintenance_placeholder.container():
+        st.header("Predictive Maintenance Analysis")
+        latest = recent_df.iloc[-1]
+        water_mean = historical_df['distance'].mean()
+        water_std = historical_df['distance'].std()
+        weight_mean = historical_df['weight'].mean()
+        weight_std = historical_df['weight'].std()
+        vib_mean = historical_df['accel'].mean()
+        vib_std = historical_df['accel'].std()
+
+        water_prob = calculate_failure_prob(latest['distance'], water_critical, water_mean, water_std, reverse=True)
+        weight_prob = calculate_failure_prob(latest['weight'], weight_critical, weight_mean, weight_std)
+        vib_prob = calculate_failure_prob(latest['accel'], vib_critical, vib_mean, vib_std)
+
+        recs = []
+        if water_status == "Critical":
+            recs.append(f"CRITICAL: Water level failure probability {water_prob:.1f}%. Immediate inspection required due to flood risk.")
+        elif next_water and next_water - water_ci < water_critical:
+            days_to_failure = (latest['distance'] - water_critical) / (latest['distance'] - next_water)
+            recs.append(f"WARNING: Water level may reach critical (flood risk) in ~{days_to_failure:.1f} measurements ({water_prob:.1f}% probability)")
+
+        if weight_status == "Critical":
+            recs.append(f"CRITICAL: Weight failure probability {weight_prob:.1f}%. Immediate structural inspection needed.")
+        elif next_weight and next_weight + weight_ci > weight_critical:
+            days_to_failure = (weight_critical - latest['weight']) / (next_weight - latest['weight'])
+            recs.append(f"WARNING: Weight may exceed critical in ~{days_to_failure:.1f} measurements ({weight_prob:.1f}% probability)")
+
+        if vib_status == "Critical":
+            recs.append(f"CRITICAL: Vibration failure probability {vib_prob:.1f}%. Immediate inspection required.")
+        elif next_vib and next_vib + vib_ci > vib_critical:
+            days_to_failure = (vib_critical - latest['accel']) / (next_vib - latest['accel'])
+            recs.append(f"WARNING: Vibration may exceed critical in ~{days_to_failure:.1f} measurements ({vib_prob:.1f}% probability)")
+
+        if water_std > 0 and abs(latest['distance'] - water_mean) > 3 * water_std:
+            recs.append("ANOMALY: Unusual water level detected. Verify sensor readings or check for flooding.")
+        if weight_std > 0 and abs(latest['weight'] - weight_mean) > 3 * weight_std:
+            recs.append("ANOMALY: Unusual weight detected. Inspect load distribution.")
+        if vib_std > 0 and abs(latest['accel'] - vib_mean) > 3 * vib_std:
+            recs.append("ANOMALY: Unusual vibration detected. Check structural integrity.")
+
+        if not recs:
+            st.success("All systems operating normally. Schedule routine maintenance in 30 days.")
+        else:
+            for rec in recs:
+                if "CRITICAL" in rec:
+                    st.error(rec)
+                elif "WARNING" in rec:
+                    st.warning(rec)
+                else:
+                    st.info(rec)
+
+    # Auto-refresh logic
+    current_time = time.time()
+    if current_time - st.session_state.last_refresh >= refresh_rate:
+        st.session_state.last_refresh = current_time
+        st.rerun()
 
 if __name__ == "__main__":
     main()
