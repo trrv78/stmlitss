@@ -7,6 +7,7 @@ import time
 import numpy as np
 from sklearn.linear_model import LinearRegression
 from scipy import stats
+from sklearn.cluster import DBSCAN  # Added for outlier detection
 
 # Supabase configuration
 SUPABASE_URL = "https://jehgpwipfqzcqnkbbvol.supabase.co"
@@ -26,9 +27,8 @@ def get_trend(data, column):
     if len(data) < 2:
         return "→", "Stable"
     
-    # Ensure y is numeric and remove NaNs
     y = pd.to_numeric(data[column], errors='coerce').dropna()
-    if len(y) < 2:  # Not enough valid data after cleaning
+    if len(y) < 2:
         return "→", "Stable"
     
     x = np.arange(len(y))
@@ -53,14 +53,14 @@ def predict_next(data, column):
 def calculate_failure_prob(value, threshold, historical_mean, historical_std, reverse=False):
     if historical_std == 0:
         return 0
-    if reverse:  # For water level (distance), lower values are critical
-        z_score = (value - threshold) / historical_std  # Distance to critical threshold
+    if reverse:
+        z_score = (value - threshold) / historical_std
         prob = stats.norm.cdf(z_score)
-        return (1 - prob) * 100  # Probability of falling below threshold
-    else:  # For weight and vibration, higher values are critical
+        return (1 - prob) * 100
+    else:
         z_score = (threshold - value) / historical_std
         prob = stats.norm.cdf(z_score)
-        return (1 - prob) * 100  # Probability of exceeding threshold
+        return (1 - prob) * 100
 
 # Status check
 def get_status(value, thresholds, reverse=False):
@@ -92,52 +92,20 @@ def main():
     st.sidebar.header("Controls")
     refresh_rate = st.sidebar.slider("Refresh Rate (seconds)", 1, 10, 2)
     
-    # Lock/unlock toggle
     if 'locked' not in st.session_state:
-        st.session_state.locked = True  # Start with values locked
+        st.session_state.locked = True
     
     st.session_state.locked = st.sidebar.toggle("Unlock Thresholds", value=st.session_state.locked)
     
     st.sidebar.header("Thresholds")
     st.sidebar.markdown("**Water Level**: Lower values mean water is closer to the bridge.")
     
-    # Locked/default values from the image
-    water_critical = st.sidebar.number_input(
-        "Water Level Critical (cm)", 
-        value=5.0, 
-        step=0.1, 
-        disabled=st.session_state.locked
-    )
-    water_warning = st.sidebar.number_input(
-        "Water Level Warning (cm)", 
-        value=10.0, 
-        step=0.1, 
-        disabled=st.session_state.locked
-    )
-    weight_critical = st.sidebar.number_input(
-        "Weight Critical (g)", 
-        value=80.0, 
-        step=1.0, 
-        disabled=st.session_state.locked
-    )
-    weight_warning = st.sidebar.number_input(
-        "Weight Warning (g)", 
-        value=60.0, 
-        step=1.0, 
-        disabled=st.session_state.locked
-    )
-    vib_critical = st.sidebar.number_input(
-        "Vibration Critical (m/s²)", 
-        value=3.9, 
-        step=0.1, 
-        disabled=st.session_state.locked
-    )
-    vib_warning = st.sidebar.number_input(
-        "Vibration Warning (m/s²)", 
-        value=3.88, 
-        step=0.1, 
-        disabled=st.session_state.locked
-    )
+    water_critical = st.sidebar.number_input("Water Level Critical (cm)", value=5.0, step=0.1, disabled=st.session_state.locked)
+    water_warning = st.sidebar.number_input("Water Level Warning (cm)", value=10.0, step=0.1, disabled=st.session_state.locked)
+    weight_critical = st.sidebar.number_input("Weight Critical (g)", value=80.0, step=1.0, disabled=st.session_state.locked)
+    weight_warning = st.sidebar.number_input("Weight Warning (g)", value=60.0, step=1.0, disabled=st.session_state.locked)
+    vib_critical = st.sidebar.number_input("Vibration Critical (m/s²)", value=3.9, step=0.1, disabled=st.session_state.locked)
+    vib_warning = st.sidebar.number_input("Vibration Warning (m/s²)", value=3.88, step=0.1, disabled=st.session_state.locked)
 
     THRESHOLDS = {
         'distance': {'critical': water_critical, 'warning': water_warning},
@@ -152,6 +120,7 @@ def main():
     recent_placeholder = st.empty()
     predictions_placeholder = st.empty()
     maintenance_placeholder = st.empty()
+    stats_placeholder = st.empty()  # New placeholder for statistical insights
 
     figs = {key: go.Figure() for key in ['water', 'weight', 'temp', 'vib', 'gyro']}
     
@@ -160,7 +129,6 @@ def main():
     retry_count = 0
     warning_displayed = False
 
-    # Initialize chart iteration counter
     if 'chart_iteration' not in st.session_state:
         st.session_state.chart_iteration = 0
 
@@ -176,7 +144,7 @@ def main():
                 
             if retry_count >= max_retries:
                 with status_placeholder.container():
-                    st.error("Maximum retries reached. No data available from Supabase. Please check the connection or data source.")
+                    st.error("Maximum retries reached. No data available from Supabase.")
                     if st.button("Retry Now"):
                         retry_count = 0
                         warning_displayed = False
@@ -187,7 +155,6 @@ def main():
             time.sleep(refresh_rate)
             continue
 
-        # Reset retry counter and clear warning when data is received
         retry_count = 0
         if warning_displayed:
             status_placeholder.empty()
@@ -230,7 +197,7 @@ def main():
             with col5:
                 st.metric("Gyro", f"{latest['gyro']:.2f} rad/s")
 
-        # Charts with unique keys and error suppression
+        # Charts
         with charts_placeholder.container():
             st.header("Time Series Data (Last 5 Measurements)")
             st.session_state.chart_iteration += 1
@@ -263,7 +230,6 @@ def main():
                 if std_val > 0 and abs(latest[key] - mean_val) > 2 * std_val:
                     fig.add_annotation(x=latest['created_at'], y=latest[key], text="Anomaly!", showarrow=True, arrowhead=1, ax=20, ay=-30)
                 
-                # Render chart with unique key and suppress errors
                 try:
                     st.plotly_chart(fig, use_container_width=True, key=f"{fig_key}_{iteration}")
                 except Exception as e:
@@ -321,28 +287,24 @@ def main():
             vib_prob = calculate_failure_prob(latest['accel'], vib_critical, vib_mean, vib_std)
 
             recs = []
-            # Water Level analysis (reverse logic: lower values are critical)
             if water_status == "Critical":
                 recs.append(f"CRITICAL: Water level failure probability {water_prob:.1f}%. Immediate inspection required due to flood risk.")
             elif next_water and next_water - water_ci < water_critical:
                 days_to_failure = (latest['distance'] - water_critical) / (latest['distance'] - next_water)
-                recs.append(f"WARNING: Water level may reach critical (flood risk) in ~{days_to_failure:.1f} measurements ({water_prob:.1f}% probability)")
+                recs.append(f"WARNING: Water level may reach critical in ~{days_to_failure:.1f} measurements ({water_prob:.1f}% probability)")
 
-            # Weight analysis
             if weight_status == "Critical":
                 recs.append(f"CRITICAL: Weight failure probability {weight_prob:.1f}%. Immediate structural inspection needed.")
             elif next_weight and next_weight + weight_ci > weight_critical:
                 days_to_failure = (weight_critical - latest['weight']) / (next_weight - latest['weight'])
                 recs.append(f"WARNING: Weight may exceed critical in ~{days_to_failure:.1f} measurements ({weight_prob:.1f}% probability)")
 
-            # Vibration analysis
             if vib_status == "Critical":
                 recs.append(f"CRITICAL: Vibration failure probability {vib_prob:.1f}%. Immediate inspection required.")
             elif next_vib and next_vib + vib_ci > vib_critical:
                 days_to_failure = (vib_critical - latest['accel']) / (next_vib - latest['accel'])
                 recs.append(f"WARNING: Vibration may exceed critical in ~{days_to_failure:.1f} measurements ({vib_prob:.1f}% probability)")
 
-            # Anomaly detection for all parameters
             if water_std > 0 and abs(latest['distance'] - water_mean) > 3 * water_std:
                 recs.append("ANOMALY: Unusual water level detected. Verify sensor readings or check for flooding.")
             if weight_std > 0 and abs(latest['weight'] - weight_mean) > 3 * weight_std:
@@ -361,8 +323,69 @@ def main():
                     else:
                         st.info(rec)
 
+        # Advanced Statistical Insights
+        with stats_placeholder.container():
+            st.header("Advanced Statistical Insights")
+
+            # Correlation Matrix
+            st.subheader("Parameter Correlations")
+            corr_matrix = historical_df[['distance', 'weight', 'temperature', 'accel', 'gyro']].corr()
+            fig_corr = go.Figure(data=go.Heatmap(
+                z=corr_matrix.values,
+                x=corr_matrix.columns,
+                y=corr_matrix.index,
+                colorscale='RdBu',
+                zmin=-1, zmax=1,
+                text=corr_matrix.values.round(2),
+                texttemplate="%{text}",
+                textfont={"size": 12}
+            ))
+            fig_corr.update_layout(title="Correlation Matrix", template='plotly_dark')
+            st.plotly_chart(fig_corr, use_container_width=True)
+
+            # Outlier Detection with DBSCAN
+            st.subheader("Outlier Detection")
+            features = historical_df[['distance', 'weight', 'accel']].dropna()  # Select key features
+            if len(features) > 5:  # Need enough data points for clustering
+                # Normalize data for DBSCAN
+                normalized_features = (features - features.mean()) / features.std()
+                dbscan = DBSCAN(eps=0.5, min_samples=3).fit(normalized_features)
+                labels = dbscan.labels_
+                outliers = features[labels == -1]  # -1 indicates outliers in DBSCAN
+                
+                if not outliers.empty:
+                    st.warning(f"Detected {len(outliers)} outliers in the data:")
+                    st.dataframe(outliers.merge(historical_df[['created_at']], left_index=True, right_index=True))
+                    
+                    # Plot outliers in a scatter plot
+                    fig_outliers = go.Figure()
+                    fig_outliers.add_trace(go.Scatter(
+                        x=historical_df['created_at'][labels != -1],
+                        y=historical_df['distance'][labels != -1],
+                        mode='markers',
+                        name='Normal',
+                        marker=dict(color='blue')
+                    ))
+                    fig_outliers.add_trace(go.Scatter(
+                        x=historical_df['created_at'][labels == -1],
+                        y=historical_df['distance'][labels == -1],
+                        mode='markers',
+                        name='Outliers',
+                        marker=dict(color='red', size=10)
+                    ))
+                    fig_outliers.update_layout(
+                        title="Outliers in Water Level (Red)",
+                        xaxis_title="Time",
+                        yaxis_title="Water Level (cm)",
+                        template='plotly_dark'
+                    )
+                    st.plotly_chart(fig_outliers, use_container_width=True)
+                else:
+                    st.success("No significant outliers detected.")
+            else:
+                st.write("Insufficient data for outlier detection.")
+
         time.sleep(refresh_rate)
 
 if __name__ == "__main__":
     main()
-
