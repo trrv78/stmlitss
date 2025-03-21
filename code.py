@@ -22,7 +22,7 @@ def fetch_data():
     response = requests.get(url, headers=headers)
     return response.json() if response.status_code == 200 else []
 
-# Calculate trend (Fixed version)
+# Calculate trend
 def get_trend(data, column):
     if len(data) < 2:
         return "→", "Stable"
@@ -341,7 +341,7 @@ def main():
                 textfont={"size": 12}
             ))
             fig_corr.update_layout(title="Correlation Matrix", template='plotly_dark')
-            st.plotly_chart(fig_corr, use_container_width=True)
+            st.plotly_chart(fig_corr, use_container_width=True, key=f"corr_{iteration}")  # Added unique key
 
             # Outlier Detection with DBSCAN
             st.subheader("Outlier Detection")
@@ -350,11 +350,9 @@ def main():
                 # Normalize data for DBSCAN, handling zero std
                 means = features.mean()
                 stds = features.std()
-                # Replace zero std with a small value to avoid division by zero
                 stds = stds.replace(0, 1e-10)
                 normalized_features = (features - means) / stds
 
-                # Check for NaN or inf in normalized_features
                 if not np.all(np.isfinite(normalized_features)):
                     st.error("Invalid data detected (NaN or inf). Skipping outlier detection.")
                     st.write("Problematic features:", features[normalized_features.isna().any(axis=1)])
@@ -389,7 +387,7 @@ def main():
                             yaxis_title="Water Level (cm)",
                             template='plotly_dark'
                         )
-                        st.plotly_chart(fig_outliers, use_container_width=True)
+                        st.plotly_chart(fig_outliers, use_container_width=True, key=f"outliers_{iteration}")  # Added unique key
                     else:
                         st.success("No significant outliers detected.")
             else:
