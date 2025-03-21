@@ -160,6 +160,10 @@ def main():
     retry_count = 0
     warning_displayed = False
 
+    # Initialize chart iteration counter
+    if 'chart_iteration' not in st.session_state:
+        st.session_state.chart_iteration = 0
+
     while True:
         data = fetch_data()
         
@@ -226,16 +230,20 @@ def main():
             with col5:
                 st.metric("Gyro", f"{latest['gyro']:.2f} rad/s")
 
-        # Charts
+        # Charts with unique keys and error suppression
         with charts_placeholder.container():
             st.header("Time Series Data (Last 5 Measurements)")
-            for fig, key, title, y_label, trace_type in [
-                (figs['water'], 'distance', 'Water Levels', 'Distance to Bridge (cm)', go.Bar),
-                (figs['weight'], 'weight', 'Weight', 'Weight (g)', go.Bar),
-                (figs['temp'], 'temperature', 'Temperature', 'Temperature (°C)', go.Scatter),
-                (figs['vib'], 'accel', 'Vibrations', 'Vibration (m/s²)', go.Scatter),
-                (figs['gyro'], 'gyro', 'Gyro', 'Angular Velocity (rad/s)', go.Scatter)
+            st.session_state.chart_iteration += 1
+            iteration = st.session_state.chart_iteration
+
+            for fig_key, key, title, y_label, trace_type in [
+                ('water', 'distance', 'Water Levels', 'Distance to Bridge (cm)', go.Bar),
+                ('weight', 'weight', 'Weight', 'Weight (g)', go.Bar),
+                ('temp', 'temperature', 'Temperature', 'Temperature (°C)', go.Scatter),
+                ('vib', 'accel', 'Vibrations', 'Vibration (m/s²)', go.Scatter),
+                ('gyro', 'gyro', 'Gyro', 'Angular Velocity (rad/s)', go.Scatter)
             ]:
+                fig = figs[fig_key]
                 fig.data = []
                 trend_arrow, trend_text = get_trend(recent_df, key)
                 mean_val = historical_df[key].mean()
@@ -254,7 +262,13 @@ def main():
                     fig.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="Threshold (80g)")
                 if std_val > 0 and abs(latest[key] - mean_val) > 2 * std_val:
                     fig.add_annotation(x=latest['created_at'], y=latest[key], text="Anomaly!", showarrow=True, arrowhead=1, ax=20, ay=-30)
-                st.plotly_chart(fig, use_container_width=True)
+                
+                # Render chart with unique key and suppress errors
+                try:
+                    st.plotly_chart(fig, use_container_width=True, key=f"{fig_key}_{iteration}")
+                except Exception as e:
+                    print(f"Suppressed error for chart {fig_key}: {str(e)}")
+                    st.write(f"Chart for {title} is temporarily unavailable.")
 
         # Recent Data
         with recent_placeholder.container():
