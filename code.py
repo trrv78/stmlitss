@@ -7,7 +7,7 @@ import time
 import numpy as np
 from sklearn.linear_model import LinearRegression
 from scipy import stats
-from sklearn.cluster import DBSCAN  # Added for outlier detection
+from sklearn.cluster import DBSCAN
 
 # Supabase configuration
 SUPABASE_URL = "https://jehgpwipfqzcqnkbbvol.supabase.co"
@@ -120,7 +120,7 @@ def main():
     recent_placeholder = st.empty()
     predictions_placeholder = st.empty()
     maintenance_placeholder = st.empty()
-    stats_placeholder = st.empty()  # New placeholder for statistical insights
+    stats_placeholder = st.empty()
 
     figs = {key: go.Figure() for key in ['water', 'weight', 'temp', 'vib', 'gyro']}
     
@@ -347,43 +347,53 @@ def main():
             st.subheader("Outlier Detection")
             features = historical_df[['distance', 'weight', 'accel']].dropna()  # Select key features
             if len(features) > 5:  # Need enough data points for clustering
-                # Normalize data for DBSCAN
-                normalized_features = (features - features.mean()) / features.std()
-                dbscan = DBSCAN(eps=0.5, min_samples=3).fit(normalized_features)
-                labels = dbscan.labels_
-                outliers = features[labels == -1]  # -1 indicates outliers in DBSCAN
-                
-                if not outliers.empty:
-                    st.warning(f"Detected {len(outliers)} outliers in the data:")
-                    st.dataframe(outliers.merge(historical_df[['created_at']], left_index=True, right_index=True))
-                    
-                    # Plot outliers in a scatter plot
-                    fig_outliers = go.Figure()
-                    fig_outliers.add_trace(go.Scatter(
-                        x=historical_df['created_at'][labels != -1],
-                        y=historical_df['distance'][labels != -1],
-                        mode='markers',
-                        name='Normal',
-                        marker=dict(color='blue')
-                    ))
-                    fig_outliers.add_trace(go.Scatter(
-                        x=historical_df['created_at'][labels == -1],
-                        y=historical_df['distance'][labels == -1],
-                        mode='markers',
-                        name='Outliers',
-                        marker=dict(color='red', size=10)
-                    ))
-                    fig_outliers.update_layout(
-                        title="Outliers in Water Level (Red)",
-                        xaxis_title="Time",
-                        yaxis_title="Water Level (cm)",
-                        template='plotly_dark'
-                    )
-                    st.plotly_chart(fig_outliers, use_container_width=True)
+                # Normalize data for DBSCAN, handling zero std
+                means = features.mean()
+                stds = features.std()
+                # Replace zero std with a small value to avoid division by zero
+                stds = stds.replace(0, 1e-10)
+                normalized_features = (features - means) / stds
+
+                # Check for NaN or inf in normalized_features
+                if not np.all(np.isfinite(normalized_features)):
+                    st.error("Invalid data detected (NaN or inf). Skipping outlier detection.")
+                    st.write("Problematic features:", features[normalized_features.isna().any(axis=1)])
                 else:
-                    st.success("No significant outliers detected.")
+                    dbscan = DBSCAN(eps=0.5, min_samples=3).fit(normalized_features)
+                    labels = dbscan.labels_
+                    outliers = features[labels == -1]  # -1 indicates outliers in DBSCAN
+                    
+                    if not outliers.empty:
+                        st.warning(f"Detected {len(outliers)} outliers in the data:")
+                        st.dataframe(outliers.merge(historical_df[['created_at']], left_index=True, right_index=True))
+                        
+                        # Plot outliers in a scatter plot
+                        fig_outliers = go.Figure()
+                        fig_outliers.add_trace(go.Scatter(
+                            x=historical_df['created_at'][labels != -1],
+                            y=historical_df['distance'][labels != -1],
+                            mode='markers',
+                            name='Normal',
+                            marker=dict(color='blue')
+                        ))
+                        fig_outliers.add_trace(go.Scatter(
+                            x=historical_df['created_at'][labels == -1],
+                            y=historical_df['distance'][labels == -1],
+                            mode='markers',
+                            name='Outliers',
+                            marker=dict(color='red', size=10)
+                        ))
+                        fig_outliers.update_layout(
+                            title="Outliers in Water Level (Red)",
+                            xaxis_title="Time",
+                            yaxis_title="Water Level (cm)",
+                            template='plotly_dark'
+                        )
+                        st.plotly_chart(fig_outliers, use_container_width=True)
+                    else:
+                        st.success("No significant outliers detected.")
             else:
-                st.write("Insufficient data for outlier detection.")
+                st.write("Insufficient data for outlier detection (need > 5 valid rows).")
 
         time.sleep(refresh_rate)
 
