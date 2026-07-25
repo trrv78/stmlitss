@@ -5,7 +5,7 @@ import io
 from datetime import datetime
 
 
-st.set_page_config(page_title="Audit Report Generator", layout="centered")
+st.set_page_config(page_title="SDA", layout="centered")
 
 st.markdown("""
 <style>
