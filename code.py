@@ -19,7 +19,7 @@ st.markdown("""
 
 st.markdown("""
 <div class="main-header">
-    <h1>Audit Participation Report</h1>
+    <h1>V1.0</h1>
     <p>Excel format matching your sample image</p>
 </div>
 """, unsafe_allow_html=True)
