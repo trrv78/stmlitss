@@ -1,1 +1,5 @@
 
+# Format:
+# Short name=Full name
+
+Trevor=Nowembabazi Trevor
